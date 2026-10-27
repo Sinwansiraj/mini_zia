@@ -1,0 +1,4 @@
+# Runtime dependencies for the Mini Zia web demo — pinned for reproducibility.
+streamlit==1.40.2
+pandas==2.2.3
+numpy==1.26.4

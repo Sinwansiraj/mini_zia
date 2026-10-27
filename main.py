@@ -7,6 +7,15 @@ import pandas as pd
 from datetime import datetime
 import sys
 
+# Make Unicode/emoji console output safe on every platform (e.g. Windows cp1252
+# consoles would otherwise raise UnicodeEncodeError). No-op where already UTF-8.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
 # Import all modules
 from data_generator import (
     generate_business_data, 

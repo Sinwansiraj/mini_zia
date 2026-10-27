@@ -1,0 +1,5 @@
+[tool.pytest.ini_options]
+# The engine modules live in the repo root (flat layout), so put it on the path.
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"

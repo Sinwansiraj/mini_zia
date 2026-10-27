@@ -423,6 +423,46 @@ def test_anomaly_detection():
 
 ---
 
+## 🌐 Web Demo (Streamlit)
+
+Mini Zia ships with an interactive web app (`streamlit_app.py`) built on the same
+rule-based engine — run it on synthetic data or upload your own KPI CSV.
+
+**Live demo:** _add the Streamlit Community Cloud URL here once deployed_
+
+### Run locally
+```bash
+pip install -r requirements.txt
+streamlit run streamlit_app.py      # opens http://localhost:8501
+```
+
+### Run the CLI
+```bash
+pip install pandas numpy
+python main.py
+```
+
+### Run the tests
+```bash
+pip install -r requirements.txt pytest
+pytest -q
+```
+
+### Runs in every environment
+The console output uses Unicode/emoji; `main.py` reconfigures stdout to UTF-8 on
+startup, so the CLI runs cleanly on **Windows, macOS and Linux** (no more
+`UnicodeEncodeError` on Windows `cp1252` consoles). The web app and the test
+suite capture output, so they are unaffected regardless of platform. CI runs the
+tests on Python 3.10, 3.11 and 3.12.
+
+### Deploy (Streamlit Community Cloud — free)
+1. Push this repo to GitHub.
+2. Go to <https://share.streamlit.io> → **New app** → select this repo + branch.
+3. Set the main file to `streamlit_app.py` and deploy — it installs
+   `requirements.txt` automatically.
+
+---
+
 ## 📞 Contact & Feedback
 
 **Created By**: Sinwan_siraj 
