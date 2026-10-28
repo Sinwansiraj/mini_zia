@@ -1,4 +1,7 @@
-# Runtime dependencies for the Mini Zia web demo — pinned for reproducibility.
-streamlit==1.40.2
-pandas==2.2.3
-numpy==1.26.4
+# Runtime dependencies for the Mini Zia web demo.
+# Ranged (not hard-pinned) so each environment installs a prebuilt wheel for its
+# Python version instead of compiling from source — this keeps the app installing
+# fast and reliably on Python 3.10 through 3.14 (incl. Streamlit Community Cloud).
+streamlit>=1.40,<2
+pandas>=2.2.3,<3
+numpy>=1.26.4,<3
