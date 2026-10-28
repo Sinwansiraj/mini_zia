@@ -1,0 +1,23 @@
+name: Keep demo warm
+
+# Streamlit Community Cloud puts free apps to sleep after inactivity, which gives
+# the next visitor a slow cold start. Pinging the app on a schedule keeps it awake
+# so the live demo loads fast for recruiters and reviewers. Best-effort on the
+# free tier; the app's UI also shows a "waking up" state as a fallback.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Streamlit app
+        run: |
+          echo "Pinging Mini Zia demo to keep it awake..."
+          curl -fsSL --max-time 90 -A "mini-zia-keepwarm" \
+            "https://minizia-kpcoyhjmslueh75wgz4mfv.streamlit.app/" -o /dev/null \
+            && echo "Pinged OK — demo is awake." \
+            || echo "Ping did not complete in time (app may be waking up)."
