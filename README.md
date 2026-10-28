@@ -461,6 +461,25 @@ tests on Python 3.10, 3.11 and 3.12.
 3. Set the main file to `streamlit_app.py` and deploy — it installs
    `requirements.txt` automatically.
 
+### Ask Zia (optional grounded AI)
+Mini Zia includes an optional **"Ask Zia"** layer: a conversational assistant that
+rephrases and answers questions about the results. It is **grounded** — it is only
+given the facts the deterministic engine computed and is instructed never to invent
+numbers. It calls any **OpenAI-compatible** chat API (Groq, OpenAI, OpenRouter,
+Gemini's OpenAI endpoint), so a **free tier works**.
+
+To enable it for everyone, add a key in **Streamlit Cloud → App → Settings → Secrets**
+(see `.streamlit/secrets.toml.example`):
+
+```toml
+LLM_API_KEY = "your-free-api-key"
+LLM_BASE_URL = "https://api.groq.com/openai/v1"
+LLM_MODEL = "llama-3.1-8b-instant"
+```
+
+Without a shared key, visitors can still paste their own key in the sidebar
+(session-only). Either way, Ask Zia only explains the computed numbers.
+
 ---
 
 ## 📞 Contact & Feedback

@@ -6,9 +6,9 @@ pipeline (anomaly detection -> period comparison -> root cause -> natural
 language insights) on synthetic KPI data OR on any business CSV you upload and
 map, and shows the results the way a business user would read them.
 
-The insights are fully deterministic and explainable. An optional LLM
-rephrasing layer exists in the codebase but is intentionally disabled in this
-public demo (no API keys, no cost, nothing sent to a third party).
+Insights are fully deterministic and explainable. An optional "Ask Zia" layer
+adds grounded, conversational Q&A via an OpenAI-compatible LLM — it can only
+explain the computed facts, never invent numbers.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ import io
 import pandas as pd
 import streamlit as st
 
+import ai_assistant
 from data_generator import generate_business_data
 from insight_engine import InsightEngine
 from main import MiniZia
@@ -39,7 +40,6 @@ def load_sample_data(days: int, seed: int = 42) -> pd.DataFrame:
 
 
 def run_pipeline(df: pd.DataFrame, cfg: dict) -> tuple[dict, str]:
-    """Run MiniZia.analyze while capturing its console output. Returns (results, log)."""
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
         zia = MiniZia(
@@ -64,6 +64,26 @@ def run_pipeline(df: pd.DataFrame, cfg: dict) -> tuple[dict, str]:
     return results, buffer.getvalue()
 
 
+def get_llm_config() -> tuple[str | None, str, str]:
+    """Resolve LLM credentials: Streamlit secrets first, then a per-session BYO key."""
+    key = None
+    base = "https://api.groq.com/openai/v1"
+    model = "llama-3.1-8b-instant"
+    try:
+        if "LLM_API_KEY" in st.secrets:
+            key = st.secrets["LLM_API_KEY"]
+            base = st.secrets.get("LLM_BASE_URL", base)
+            model = st.secrets.get("LLM_MODEL", model)
+    except Exception:  # noqa: BLE001 - no secrets file configured is fine
+        pass
+    byo = st.session_state.get("byo_key")
+    if byo:
+        key = byo
+        base = st.session_state.get("byo_base") or base
+        model = st.session_state.get("byo_model") or model
+    return key, base, model
+
+
 # ── Header ───────────────────────────────────────────────────────────────────
 
 st.title("🤖 Mini Zia")
@@ -71,8 +91,8 @@ st.caption("Automated Business Insight Generator — turns any KPI data into pla
 
 st.info(
     "**Demo note:** insights come from a **deterministic, rule-based engine** — fully explainable, no "
-    "black box. Use the built-in **sample data**, or **upload your own CSV** and map the columns. An "
-    "optional LLM layer exists in the code but is **disabled here** (no keys, nothing sent anywhere).",
+    "black box. Use the built-in **sample data** or **upload your own CSV**. The optional **Ask Zia** AI "
+    "only explains the computed numbers (it can't invent figures).",
     icon="ℹ️",
 )
 
@@ -121,7 +141,6 @@ else:
     numeric_cols = raw.select_dtypes(include="number").columns.tolist()
     all_cols = raw.columns.tolist()
     cat_cols = [c for c in all_cols if c not in numeric_cols]
-
     if not numeric_cols:
         st.error("No numeric columns found — Mini Zia needs at least one numeric metric to analyse.")
         st.stop()
@@ -141,11 +160,10 @@ else:
         mean_metrics = st.multiselect(
             "Which metrics are rates/% (averaged, not summed)?",
             [primary_metric, *driver_metrics],
-            help="e.g. conversion rate, CTR — these are averaged across groups instead of summed.",
+            help="e.g. conversion rate, CTR — averaged across groups instead of summed.",
         )
         currency = st.text_input("Unit / currency symbol (optional)", value="")
 
-    # Canonicalise: rename the chosen date column to 'date' and parse it.
     working_df = raw.rename(columns={date_col: "date"}).copy()
     working_df["date"] = pd.to_datetime(working_df["date"], errors="coerce")
     if working_df["date"].isna().all():
@@ -164,7 +182,7 @@ else:
         currency=currency.strip(),
     )
 
-# ── Sidebar: window, filters, thresholds, run ────────────────────────────────
+# ── Sidebar: window, filters, thresholds, AI key, run ────────────────────────
 
 with st.sidebar:
     st.header("Comparison window")
@@ -185,28 +203,46 @@ with st.sidebar:
         cfg["threshold_pct"] = st.number_input("Anomaly threshold (% change)", 5.0, 50.0, 15.0, 5.0)
         cfg["significance"] = st.number_input("Trend significance (%)", 5.0, 50.0, 10.0, 5.0)
 
+    with st.expander("🤖 Ask Zia AI (optional)"):
+        st.caption("Uses a grounded LLM to explain results. A shared key may already be configured.")
+        st.session_state["byo_key"] = st.text_input("Your API key (session only)", type="password",
+                                                     value=st.session_state.get("byo_key", ""))
+        st.session_state["byo_base"] = st.text_input("Base URL",
+                                                     value=st.session_state.get("byo_base", "https://api.groq.com/openai/v1"))
+        st.session_state["byo_model"] = st.text_input("Model",
+                                                      value=st.session_state.get("byo_model", "llama-3.1-8b-instant"))
+
     run = st.button("▶ Run analysis", type="primary", use_container_width=True)
 
-# ── Intro / run ──────────────────────────────────────────────────────────────
+# ── Run -> persist in session state so the dashboard + chat survive reruns ───
 
-if not run:
+if run:
+    try:
+        with st.spinner("Analysing…"):
+            results, log = run_pipeline(working_df, cfg)
+        st.session_state["miniz"] = {"results": results, "log": log, "cfg": cfg, "df": working_df}
+        st.session_state["chat"] = []
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"Analysis failed: {exc}")
+        st.stop()
+
+state = st.session_state.get("miniz")
+if state is None:
     st.subheader("How to use this")
     st.markdown(
-        "1. Use **Sample data**, or **Upload CSV** and map your columns (date, the metric to analyse, "
-        "optional drivers, and dimensions to break down by).\n"
-        "2. Choose the **comparison window** (e.g. this week vs last week) and any **filters**.\n"
+        "1. Use **Sample data**, or **Upload CSV** and map your columns.\n"
+        "2. Choose the **comparison window** and any **filters**.\n"
         "3. Click **Run analysis** — Mini Zia flags anomalies, compares periods, finds the likely cause, "
-        "and writes an executive summary with recommendations."
+        "and writes an executive summary with recommendations. Then **Ask Zia** about the results."
     )
-    st.dataframe(working_df.head(12), use_container_width=True)
+    if working_df is not None:
+        st.dataframe(working_df.head(12), use_container_width=True)
     st.stop()
 
-try:
-    with st.spinner("Analysing…"):
-        results, log = run_pipeline(working_df, cfg)
-except Exception as exc:  # noqa: BLE001
-    st.error(f"Analysis failed: {exc}")
-    st.stop()
+results = state["results"]
+log = state["log"]
+cfg = state["cfg"]
+working_df = state["df"]
 
 insights = results["insights"]
 metrics = results["_summary_metrics"]
@@ -263,7 +299,6 @@ if anomalies:
                 help=str(a.get("anomaly_type", "")).replace("_", " "),
             )
 
-# Trend chart — first dimension by the primary metric over time
 st.subheader(f"{cfg['primary_metric'].replace('_', ' ').title()} trend")
 try:
     dims = cfg["dimensions"]
@@ -289,8 +324,56 @@ with st.expander("Full report & engine trace"):
         st.caption("Pipeline log")
         st.code(log, language="text")
 
+# ── Ask Zia (grounded AI) ────────────────────────────────────────────────────
+
+st.divider()
+st.subheader("💬 Ask Zia")
+api_key, base_url, model = get_llm_config()
+
+if not api_key:
+    st.info(
+        "Ask Zia (AI) is available — add an API key to enable it. Paste a free-tier key "
+        "(e.g. from Groq) in the sidebar's **🤖 Ask Zia AI** section, or the site owner can configure a shared key.",
+        icon="🔑",
+    )
+else:
+    context = ai_assistant.build_context(results, cfg)
+    cc1, cc2 = st.columns([1, 3])
+    with cc1:
+        if st.button("📝 Rephrase as narrative"):
+            try:
+                with st.spinner("Asking Zia…"):
+                    msgs = ai_assistant.build_messages(
+                        context, [], "Rewrite these findings as a short, professional executive narrative."
+                    )
+                    answer = ai_assistant.chat_completion(msgs, api_key, base_url, model)
+                st.session_state.setdefault("chat", []).append(("assistant", answer))
+            except Exception as exc:  # noqa: BLE001
+                st.error(str(exc))
+    with cc2:
+        st.caption("Ask a question about these results, e.g. *“Which group should I worry about and why?”*")
+
+    for role, content in st.session_state.get("chat", []):
+        with st.chat_message(role):
+            st.markdown(content)
+
+    question = st.chat_input("Ask Zia about these results…")
+    if question:
+        st.session_state.setdefault("chat", []).append(("user", question))
+        with st.chat_message("user"):
+            st.markdown(question)
+        try:
+            history = st.session_state["chat"][:-1]
+            msgs = ai_assistant.build_messages(context, history, question)
+            with st.chat_message("assistant"), st.spinner("Asking Zia…"):
+                answer = ai_assistant.chat_completion(msgs, api_key, base_url, model)
+                st.markdown(answer)
+            st.session_state["chat"].append(("assistant", answer))
+        except Exception as exc:  # noqa: BLE001
+            st.error(str(exc))
+
 st.divider()
 st.caption(
     "Mini Zia · rule-based (explainable) insight engine · works on any business CSV · "
-    "optional LLM rephrasing disabled in this demo."
+    "Ask Zia is grounded in the computed results."
 )
