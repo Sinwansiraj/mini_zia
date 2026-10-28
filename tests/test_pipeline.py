@@ -104,8 +104,45 @@ def test_summary_metrics(df: pd.DataFrame, results: dict):
     assert metrics["priority"] in VALID_PRIORITIES
 
 
-def test_region_filter_runs(df: pd.DataFrame):
+def test_dimension_filter_runs(df: pd.DataFrame):
     zia = MiniZia(enable_llm=False)
     with contextlib.redirect_stdout(io.StringIO()):
-        res = zia.analyze(df, current_period_days=7, previous_period_days=7, region_filter="Chennai")
+        res = zia.analyze(df, current_period_days=7, previous_period_days=7, filters={"region": "Chennai"})
     assert res["insights"]["priority"] in VALID_PRIORITIES
+
+
+# ── Generic (any-schema) data ────────────────────────────────────────────────
+
+
+def test_generic_schema_runs():
+    """The engine should analyse arbitrary metric/dimension columns, not just the sample."""
+    import numpy as np
+
+    dates = pd.date_range(end=pd.Timestamp.today(), periods=40, freq="D")
+    rng = np.random.default_rng(0)
+    rows = [
+        {
+            "date": d,
+            "product": prod,
+            "revenue": float(rng.uniform(500, 1500)),
+            "visits": int(rng.uniform(800, 2000)),
+        }
+        for d in dates
+        for prod in ["A", "B", "C"]
+    ]
+    gdf = pd.DataFrame(rows)
+
+    zia = MiniZia(enable_llm=False)
+    with contextlib.redirect_stdout(io.StringIO()):
+        res = zia.analyze(
+            gdf,
+            primary_metric="revenue",
+            driver_metrics=["visits"],
+            dimensions=["product"],
+            mean_metrics=[],
+            currency="$",
+        )
+    assert res["insights"]["priority"] in VALID_PRIORITIES
+    assert "revenue_change_pct" in res["comparisons"].columns
+    summary = res["insights"]["summary"]
+    assert "Revenue" in summary or summary == "No significant changes detected"

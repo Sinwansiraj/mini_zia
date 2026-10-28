@@ -59,86 +59,93 @@ class AnomalyDetector:
         
         return df
     
-    def detect_significant_changes(self, current_df: pd.DataFrame, 
+    def detect_significant_changes(self, current_df: pd.DataFrame,
                                    previous_df: pd.DataFrame,
                                    metrics: List[str],
-                                   group_by: List[str] = None) -> pd.DataFrame:
+                                   group_by: List[str] = None,
+                                   mean_metrics: List[str] = None) -> pd.DataFrame:
         """
         Detect significant period-over-period changes.
-        
+
         Args:
             current_df (pd.DataFrame): Current period data
             previous_df (pd.DataFrame): Previous period data
             metrics (List[str]): Metrics to compare
             group_by (List[str]): Grouping columns
-        
+            mean_metrics (List[str]): Metrics aggregated by mean (rates/%) instead of sum
+
         Returns:
             pd.DataFrame: Comparison results with anomaly flags
         """
         group_cols = group_by if group_by else []
-        
-        # Aggregate both periods
-        current_agg = current_df.groupby(group_cols)[metrics].sum().reset_index() if group_cols else \
-                      pd.DataFrame({metric: [current_df[metric].sum()] for metric in metrics})
-        
-        previous_agg = previous_df.groupby(group_cols)[metrics].sum().reset_index() if group_cols else \
-                       pd.DataFrame({metric: [previous_df[metric].sum()] for metric in metrics})
-        
-        # Merge and calculate changes
+        mean_set = set(mean_metrics or [])
+        agg_map = {m: ('mean' if m in mean_set else 'sum') for m in metrics}
+
         if group_cols:
+            current_agg = current_df.groupby(group_cols).agg(agg_map).reset_index()
+            previous_agg = previous_df.groupby(group_cols).agg(agg_map).reset_index()
             comparison = current_agg.merge(previous_agg, on=group_cols, suffixes=('_current', '_prev'))
         else:
             comparison = pd.DataFrame()
             for metric in metrics:
-                comparison[f'{metric}_current'] = current_agg[metric]
-                comparison[f'{metric}_prev'] = previous_agg[metric]
-        
+                cur = current_df[metric].mean() if metric in mean_set else current_df[metric].sum()
+                prev = previous_df[metric].mean() if metric in mean_set else previous_df[metric].sum()
+                comparison[f'{metric}_current'] = [cur]
+                comparison[f'{metric}_prev'] = [prev]
+
         # Calculate percentage changes
         for metric in metrics:
             comparison[f'{metric}_change_pct'] = (
-                (comparison[f'{metric}_current'] - comparison[f'{metric}_prev']) / 
+                (comparison[f'{metric}_current'] - comparison[f'{metric}_prev']) /
                 (comparison[f'{metric}_prev'] + 1e-6) * 100
             )
             comparison[f'{metric}_is_anomaly'] = (
                 np.abs(comparison[f'{metric}_change_pct']) > self.threshold_pct
             )
-        
+
         return comparison
-    
-    def find_regional_anomalies(self, df: pd.DataFrame, metric: str, 
-                               period_days: int = 7) -> List[Dict]:
+
+    def find_regional_anomalies(self, df: pd.DataFrame, metric: str,
+                               period_days: int = 7,
+                               dimension: str = 'region') -> List[Dict]:
         """
-        Identify regions with unusual metric values compared to overall average.
-        
+        Identify groups (within a dimension) whose metric value is unusual vs the average.
+
         Args:
             df (pd.DataFrame): Input data
             metric (str): Metric to analyze
-            period_days (int): Number of days to analyze
-        
+            period_days (int): Number of recent days to analyze
+            dimension (str): Column to group across (e.g. 'region', 'product', 'channel')
+
         Returns:
-            List[Dict]: List of regional anomalies
+            List[Dict]: List of anomalies
         """
         recent_data = df[df['date'] >= df['date'].max() - pd.Timedelta(days=period_days)]
-        
-        # Calculate regional performance
-        regional_agg = recent_data.groupby('region')[metric].sum().reset_index()
-        overall_avg = recent_data[metric].sum() / len(recent_data['region'].unique())
-        
+        if dimension not in recent_data.columns or len(recent_data) == 0:
+            return []
+
+        agg = recent_data.groupby(dimension)[metric].sum().reset_index()
+        n_groups = recent_data[dimension].nunique()
+        overall_avg = (recent_data[metric].sum() / n_groups) if n_groups else 0
+
         anomalies = []
-        
-        for _, row in regional_agg.iterrows():
+        if overall_avg == 0:
+            return anomalies
+
+        for _, row in agg.iterrows():
             pct_diff = ((row[metric] - overall_avg) / overall_avg) * 100
-            
             if abs(pct_diff) > self.threshold_pct:
                 anomalies.append({
-                    'region': row['region'],
+                    'group': row[dimension],
+                    'dimension': dimension,
+                    'region': row[dimension],  # backward-compatible alias
                     'metric': metric,
                     'value': row[metric],
                     'avg_value': overall_avg,
                     'deviation_pct': round(pct_diff, 2),
                     'anomaly_type': 'above_average' if pct_diff > 0 else 'below_average'
                 })
-        
+
         return anomalies
     
     def analyze_segment_split(self, current_df: pd.DataFrame, 

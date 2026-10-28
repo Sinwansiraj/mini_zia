@@ -133,43 +133,46 @@ class TrendAnalyzer:
     def analyze_cause_effect(self, current_df: pd.DataFrame,
                             previous_df: pd.DataFrame,
                             target_metric: str = 'sales',
-                            driver_metrics: List[str] = None) -> Dict:
+                            driver_metrics: List[str] = None,
+                            mean_metrics: List[str] = None) -> Dict:
         """
         Analyze relationships between metrics to identify root causes.
-        
+
         Args:
             current_df (pd.DataFrame): Current period data
             previous_df (pd.DataFrame): Previous period data
             target_metric (str): The metric that changed
             driver_metrics (List[str]): Potential driver metrics
-        
+            mean_metrics (List[str]): Metrics aggregated by mean (rates/%) instead of sum
+
         Returns:
             Dict: Analysis of potential causes
         """
         if driver_metrics is None:
             driver_metrics = ['leads', 'conversion_rate']
-        
+        mean_set = set(mean_metrics if mean_metrics is not None else ['conversion_rate'])
+
         # Calculate overall changes
-        target_current = current_df[target_metric].sum()
-        target_previous = previous_df[target_metric].sum()
-        target_change_pct = ((target_current - target_previous) / target_previous) * 100
-        
+        target_current = current_df[target_metric].mean() if target_metric in mean_set else current_df[target_metric].sum()
+        target_previous = previous_df[target_metric].mean() if target_metric in mean_set else previous_df[target_metric].sum()
+        target_change_pct = ((target_current - target_previous) / (target_previous + 1e-6)) * 100
+
         causes = {
             'target_metric': target_metric,
             'target_change_pct': round(target_change_pct, 2),
             'potential_drivers': []
         }
-        
+
         for driver in driver_metrics:
-            if driver == 'conversion_rate':
+            if driver in mean_set:
                 driver_current = current_df[driver].mean()
                 driver_previous = previous_df[driver].mean()
             else:
                 driver_current = current_df[driver].sum()
                 driver_previous = previous_df[driver].sum()
-            
-            driver_change_pct = ((driver_current - driver_previous) / driver_previous) * 100
-            
+
+            driver_change_pct = ((driver_current - driver_previous) / (driver_previous + 1e-6)) * 100
+
             # Determine if this is a significant driver
             is_significant = abs(driver_change_pct) > self.significance_threshold
             
